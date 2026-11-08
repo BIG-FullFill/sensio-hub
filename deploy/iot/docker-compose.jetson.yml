@@ -1,6 +1,6 @@
 services:
   sensio-iot:
-    image: ${SENSIO_IOT_IMAGE:-ghcr.io/big-fullfill/sensio-iot-new:jetson}
+    image: ${SENSIO_IOT_IMAGE:-ghcr.io/big-fullfill/sensio-iot-new:arm64}
     pull_policy: always
     container_name: sensio-iot
     env_file:
