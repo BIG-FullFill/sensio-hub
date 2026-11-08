@@ -1,0 +1,68 @@
+services:
+  sensio-iot:
+    image: ${SENSIO_IOT_IMAGE:-ghcr.io/farismnrr/sensio-iot-new:jetson}
+    pull_policy: always
+    container_name: sensio-iot
+    env_file:
+      - path: ${SENSIO_IOT_ENV_FILE:-.env}
+        required: false
+    environment:
+      DATABASE_SCHEMA: ${DATABASE_SCHEMA:-sensio-iot}
+      BIND_ADDR: 0.0.0.0:3000
+      TRUST_PROXY_HEADERS: "true"
+      ANNOTATION_ENABLED: ${ANNOTATION_ENABLED:-false}
+      TUYA_ENABLED: ${TUYA_ENABLED:-false}
+      MANAGED_MQTT_BROKER_ENABLED: ${MANAGED_MQTT_BROKER_ENABLED:-true}
+      SENSIO_AI_ENABLED: ${SENSIO_AI_ENABLED:-true}
+      SENSIO_AI_NODE_BINARY: node
+      SENSIO_AI_WORKER_PATH: /app/assistant-js/worker.mjs
+      DEVICE_TOKEN_ENCRYPTION_KEY_FILE: /run/secret/device_token_encryption_key
+      RUST_LOG: ${RUST_LOG:-sensio_iot=info,tower_http=info}
+    volumes:
+      - "${DEVICE_TOKEN_ENCRYPTION_KEY_HOST_PATH:-./.secrets/device_token_encryption_key}:/run/secret/device_token_encryption_key:ro"
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/bin/docker:/usr/local/bin/docker:ro
+      - shared-mosquitto-config:/var/lib/sensio/mosquitto-config
+    ports:
+      - "${SENSIO_IOT_HOST_BIND:-0.0.0.0}:${SENSIO_IOT_HOST_PORT:-3001}:3000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:3000/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    networks:
+      - shared-network
+    restart: always
+
+  sensio-nginx:
+    image: nginx:stable-alpine
+    pull_policy: always
+    container_name: sensio-nginx
+    depends_on:
+      sensio-iot:
+        condition: service_healthy
+    network_mode: host
+    environment:
+      NGINX_ENVSUBST_FILTER: SENSIO_
+      SENSIO_ZIGBEE2MQTT_HOST_BIND: ${SENSIO_ZIGBEE2MQTT_HOST_BIND:-127.0.0.1}
+      SENSIO_ZIGBEE2MQTT_HTTPS_PORT: ${SENSIO_ZIGBEE2MQTT_HTTPS_PORT:-3003}
+    volumes:
+      - ./nginx/sensio-tailscale.conf:/etc/nginx/templates/default.conf.template:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --spider http://127.0.0.1:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    restart: always
+
+networks:
+  shared-network:
+    name: sensio-shared-network
+    driver: bridge
+
+volumes:
+  shared-mosquitto-config:
+    name: sensio-shared-mosquitto-config

@@ -1,0 +1,13 @@
+services:
+  sensio-notes:
+    image: ${SENSIO_NOTES_IMAGE:-ghcr.io/farismnrr/sensio-notes:latest}
+    container_name: sensio-notes
+    env_file:
+      - path: ${SENSIO_NOTES_ENV_FILE:-.env}
+        required: false
+    environment:
+      BIND_ADDR: 0.0.0.0:4000
+      DATABASE_SCHEMA: sensio-notes
+    ports:
+      - "${SENSIO_NOTES_HOST_PORT:-4000}:4000"
+    restart: unless-stopped
