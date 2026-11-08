@@ -6,7 +6,7 @@
 # ==============================================================================
 set -euo pipefail
 
-REPO="farismnrr/Sensio-IoT-New"
+REPO="BIG-FullFill/Sensio-IoT-New"
 BINARY_NAME="sensio"
 INSTALL_DIR="/usr/local/bin"
 

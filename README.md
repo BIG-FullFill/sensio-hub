@@ -4,8 +4,8 @@
 ### The Public Distribution Hub, Documentation Portal & Deployment Center for the Sensio Ecosystem
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Ffarismnrr%2Fsensio--iot--new-blue?logo=docker)](https://github.com/farismnrr/Sensio-IoT-New/pkgs/container/sensio-iot-new)
-[![GitHub Releases](https://img.shields.io/badge/release-latest-green?logo=github)](https://github.com/farismnrr/Sensio-IoT-New/releases)
+[![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fbig--fullfill%2Fsensio--iot--new-blue?logo=docker)](https://github.com/BIG-FullFill/Sensio-IoT-New/pkgs/container/sensio-iot-new)
+[![GitHub Releases](https://img.shields.io/badge/release-latest-green?logo=github)](https://github.com/BIG-FullFill/Sensio-IoT-New/releases)
 [![Platform](https://img.shields.io/badge/platform-Linux%20AMD64%20%7C%20ARM64%20Jetson%20%7C%20Android-orange)](docs/overview.md)
 
 </div>
@@ -96,7 +96,7 @@ See the [Model Context Protocol Setup Guide](docs/iot/mcp-setup.md) for Claude D
 ## 📱 Sensio IoT Android App
 
 Download the signed companion APK directly from GitHub Releases:
-- **[Download Latest Android APK](https://github.com/farismnrr/Sensio-IoT-New/releases)**
+- **[Download Latest Android APK](https://github.com/BIG-FullFill/Sensio-IoT-New/releases)**
 - Setup Guide: [Android Installation Walkthrough](docs/iot/install-android.md)
 
 ---

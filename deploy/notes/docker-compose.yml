@@ -1,6 +1,6 @@
 services:
   sensio-notes:
-    image: ${SENSIO_NOTES_IMAGE:-ghcr.io/farismnrr/sensio-notes:latest}
+    image: ${SENSIO_NOTES_IMAGE:-ghcr.io/big-fullfill/sensio-notes:latest}
     container_name: sensio-notes
     env_file:
       - path: ${SENSIO_NOTES_ENV_FILE:-.env}
