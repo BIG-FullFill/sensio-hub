@@ -9,10 +9,10 @@ The **Sensio IoT Android App** provides a native mobile interface with spatial c
 Pre-signed APK packages are published on GitHub Releases:
 
 - **Latest Stable Release**: [Sensio IoT Releases](https://github.com/BIG-FullFill/sensio-hub/releases)
-- **Direct Download (v0.2.3)**: [sensio-iot-0.2.3.apk](https://github.com/BIG-FullFill/sensio-hub/releases/download/iot-v0.2.3/sensio-iot-0.2.3.apk)
+- **Direct Download (v0.2.4)**: [sensio-iot-0.2.4.apk](https://github.com/BIG-FullFill/sensio-hub/releases/download/iot-v0.2.4/sensio-iot-0.2.4.apk)
 - **Verified SHA-256 Checksum**:
   ```
-  2aab8a61dbdfbe813cf9957761bb1a58392814efd6cd723fa7ef75d6de88ee30
+  d31b17a3a7ca6dfd083b57cfc177cf115c97c36734b43fc3eafe1af8f8061059
   ```
 
 ---
