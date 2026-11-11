@@ -12,7 +12,7 @@ Pre-signed APK packages are published on GitHub Releases:
 - **Direct Download (v0.1.0)**: [sensio-notes-0.1.0.apk](https://github.com/BIG-FullFill/sensio-hub/releases/download/notes-v0.1.0/sensio-notes-0.1.0.apk)
 - **Verified SHA-256 Checksum**:
   ```
-  pending-initial-release
+  67045878b0351721c6d26f7fa832b34c9751fd5a28cdc87110442b1bbc787db8
   ```
 
 ---
