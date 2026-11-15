@@ -9,10 +9,10 @@ The **Sensio Notes Android App** provides a privacy-first, markdown-native knowl
 Pre-signed APK packages are published on GitHub Releases:
 
 - **Latest Stable Release**: [Sensio Notes Releases](https://github.com/BIG-FullFill/sensio-hub/releases)
-- **Direct Download (v0.1.2)**: [sensio-notes-0.1.2.apk](https://github.com/BIG-FullFill/sensio-hub/releases/download/notes-v0.1.2/sensio-notes-0.1.2.apk)
+- **Direct Download (v0.1.3)**: [sensio-notes-0.1.3.apk](https://github.com/BIG-FullFill/sensio-hub/releases/download/notes-v0.1.3/sensio-notes-0.1.3.apk)
 - **Verified SHA-256 Checksum**:
   ```
-  d10359a90175180e1aa0ab5f2ea16cffc5f29568fe87d8f0aeb10fcfa7b78514
+  1e4a5beaa0aed57ec46f1f8c30dc1de68d975cc1417b189ea26f2974aa3541ae
   ```
 
 ---
