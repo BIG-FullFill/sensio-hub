@@ -1,10 +1,6 @@
 name: Sensio Notes Android APK Release
 
 on:
-  repository_dispatch:
-    types:
-      - notes-release
-      - notes-apk-release
   workflow_dispatch:
     inputs:
       ref:
@@ -52,7 +48,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: BIG-FullFill/Sensio-Notes-New
-          ref: ${{ inputs.ref || github.event.client_payload.sha || 'main' }}
+          ref: ${{ inputs.ref || 'main' }}
           token: ${{ secrets.SENSIO_SOURCE_TOKEN }}
           fetch-depth: 0
           path: src
