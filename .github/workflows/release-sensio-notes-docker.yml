@@ -1,0 +1,186 @@
+name: Sensio Notes Docker GHCR Release
+
+on:
+  repository_dispatch:
+    types:
+      - notes-release
+      - notes-docker-release
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Sensio-Notes-New branch, tag, or commit SHA to build"
+        required: false
+        default: "main"
+      version:
+        description: "Optional explicit version override (e.g. v0.1.0)"
+        required: false
+        default: ""
+      bump:
+        description: "Semver bump when auto-incrementing"
+        required: false
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions: {}
+
+concurrency:
+  group: sensio-hub-docker-notes
+  cancel-in-progress: false
+
+jobs:
+  validate-and-publish:
+    name: Validate & Publish Sensio Notes GHCR Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Check Sensio Source Token
+        env:
+          SENSIO_SOURCE_TOKEN: ${{ secrets.SENSIO_SOURCE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$SENSIO_SOURCE_TOKEN" ]; then
+            echo "::error::Missing repository secret SENSIO_SOURCE_TOKEN (requires Contents: Read on BIG-FullFill/Sensio-Notes-New)."
+            exit 1
+          fi
+
+      - name: Checkout sensio-hub Scripts
+        uses: actions/checkout@v4
+        with:
+          path: hub
+          persist-credentials: false
+
+      - name: Checkout Sensio-Notes-New Source
+        uses: actions/checkout@v4
+        with:
+          repository: BIG-FullFill/Sensio-Notes-New
+          ref: ${{ inputs.ref || github.event.client_payload.sha || 'main' }}
+          token: ${{ secrets.SENSIO_SOURCE_TOKEN }}
+          path: src
+          persist-credentials: false
+
+      - name: Resolve Source Commit
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git -C src rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$(git -C src rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Android Release Scripts
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/android/resolve-release-version.py scripts/android/prepare-generated-project.py scripts/android/branding.py
+          python3 -m unittest discover -s scripts/android -p "test_release_version.py"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/web/package-lock.json
+
+      - name: Web Frontend Check
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/check-design-system.sh
+          cd web
+          npm ci --prefer-offline --no-audit || npm install
+          npm run typecheck
+          npm run lint
+          npm test
+          npm run build
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: src/backend/go.mod
+          cache: true
+          cache-dependency-path: src/backend/go.sum
+
+      - name: Backend Vet & Test
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_cid="$(docker run -d --rm \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=sensio_notes_test \
+            -p 127.0.0.1::5432 \
+            timescale/timescaledb-ha:pg17)"
+          trap 'docker rm -f "$pg_cid" >/dev/null 2>&1 || true' EXIT
+          pg_port="$(docker port "$pg_cid" 5432/tcp | head -n1 | awk -F: '{print $NF}')"
+          for _ in $(seq 1 60); do
+            if docker exec -e PGPASSWORD=postgres "$pg_cid" psql -h 127.0.0.1 -U postgres -d sensio_notes_test -tAc "SELECT 1" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          export TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:${pg_port}/sensio_notes_test?sslmode=disable"
+          cd backend
+          go vet ./...
+          go test -v ./...
+
+      - name: Mobile Typecheck
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd mobile
+          npm ci --prefer-offline --no-audit || npm install
+          npx tsc --noEmit
+
+      - name: Resolve GHCR Version
+        id: version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 hub/scripts/ci/resolve-ghcr-version.py \
+            --owner "BIG-FullFill" \
+            --package "sensio-notes" \
+            --start-version "0.1.0" \
+            --override-version "${{ inputs.version || '' }}" \
+            --bump "${{ inputs.bump || 'patch' }}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Sensio Notes Image (linux/amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: src
+          file: src/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/big-fullfill/sensio-notes:${{ steps.version.outputs.version }}
+            ghcr.io/big-fullfill/sensio-notes:latest
+          labels: |
+            org.opencontainers.image.title=Sensio Notes
+            org.opencontainers.image.source=https://github.com/BIG-FullFill/sensio-hub
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.sha }}
+          cache-from: type=gha,scope=sensio-notes-docker
+          cache-to: type=gha,mode=max,scope=sensio-notes-docker

@@ -1,13 +1,41 @@
 services:
   sensio-notes:
-    image: ${SENSIO_NOTES_IMAGE:-ghcr.io/big-fullfill/sensio-notes:latest}
+    image: ghcr.io/big-fullfill/sensio-notes:${SENSIO_NOTES_IMAGE_TAG:-latest}
+    pull_policy: always
     container_name: sensio-notes
     env_file:
       - path: ${SENSIO_NOTES_ENV_FILE:-.env}
         required: false
     environment:
-      BIND_ADDR: 0.0.0.0:4000
-      DATABASE_SCHEMA: sensio-notes
+      HOST: 0.0.0.0
+      PORT: "8080"
+      DATA_DIR: /app/data
+      LOG_FILE: /app/logs/server.log
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://shared-searxng:8080}
+      MEETING_BOT_BASE_URL: ${MEETING_BOT_BASE_URL:-http://sensio-meeting-bot-api:8000}
+      MEETING_BOT_WEBHOOK_BASE_URL: ${MEETING_BOT_WEBHOOK_BASE_URL:-}
     ports:
-      - "${SENSIO_NOTES_HOST_PORT:-4000}:4000"
+      - "${SENSIO_NOTES_HOST_BIND:-0.0.0.0}:${SENSIO_NOTES_HOST_PORT:-3008}:8080"
+    volumes:
+      - sensio_notes_data:/app/data
+      - sensio_notes_logs:/app/logs
+    networks:
+      - shared-network
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 6
     restart: unless-stopped
+
+volumes:
+  sensio_notes_data:
+    name: sensio-notes-new-data
+  sensio_notes_logs:
+    name: sensio-notes-new-logs
+
+networks:
+  shared-network:
+    external: true
+    name: shared-network

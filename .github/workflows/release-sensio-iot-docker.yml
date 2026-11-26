@@ -1,0 +1,266 @@
+name: Sensio IoT Multi-Arch Docker GHCR Release
+
+on:
+  repository_dispatch:
+    types:
+      - iot-release
+      - iot-docker-release
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Sensio-IoT-New branch, tag, or commit SHA to build"
+        required: false
+        default: "main"
+      version:
+        description: "Optional explicit version override (e.g. v0.2.18)"
+        required: false
+        default: ""
+      bump:
+        description: "Semver bump when auto-incrementing"
+        required: false
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions: {}
+
+concurrency:
+  group: sensio-hub-docker-iot
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/big-fullfill/sensio-iot-new
+
+jobs:
+  validate:
+    name: Validate & Resolve Sensio IoT Version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      short_sha: ${{ steps.source.outputs.short_sha }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check Sensio Source Token
+        env:
+          SENSIO_SOURCE_TOKEN: ${{ secrets.SENSIO_SOURCE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$SENSIO_SOURCE_TOKEN" ]; then
+            echo "::error::Missing repository secret SENSIO_SOURCE_TOKEN (requires Contents: Read on BIG-FullFill/Sensio-IoT-New)."
+            exit 1
+          fi
+
+      - name: Checkout sensio-hub Scripts
+        uses: actions/checkout@v4
+        with:
+          path: hub
+          persist-credentials: false
+
+      - name: Checkout Sensio-IoT-New Source
+        uses: actions/checkout@v4
+        with:
+          repository: BIG-FullFill/Sensio-IoT-New
+          ref: ${{ inputs.ref || github.event.client_payload.sha || 'main' }}
+          token: ${{ secrets.SENSIO_SOURCE_TOKEN }}
+          path: src
+          persist-credentials: false
+
+      - name: Resolve Source Commit
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git -C src rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$(git -C src rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Runtime Compose
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -Eq '^[[:space:]]*build:' docker-compose.run.yml docker-compose.jetson-https.yml; then
+            echo "Runtime Compose must not build the application image" >&2
+            exit 1
+          fi
+          bash -n scripts/setup-jetson-tailscale-tls.sh
+          validation_env="$(mktemp)"
+          trap 'rm -f "$validation_env"' EXIT
+          printf '%s\n' 'DATABASE_URL=postgresql://validate:validate@127.0.0.1:5432/validate' > "$validation_env"
+          SENSIO_IOT_ENV_FILE="$validation_env" \
+          SENSIO_IOT_HOST_BIND=127.0.0.1 SENSIO_IOT_HOST_PORT=3001 \
+          SENSIO_HTTPS_HOST_PORT=3000 SENSIO_ZIGBEE2MQTT_HOST_BIND=127.0.0.1 \
+          SENSIO_ZIGBEE2MQTT_HTTPS_PORT=3003 SENSIO_NGINX_TLS_HOST_DIR=/tmp/sensio-nginx-tls \
+            docker compose -f docker-compose.run.yml -f docker-compose.jetson-https.yml config >/dev/null
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/package-lock.json
+
+      - name: Frontend Format Check
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefer-offline --no-audit || npm install
+          npm run format:check
+
+      - name: Validate Android Release Scripts
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/android/prepare-generated-project.py scripts/android/resolve-release-version.py
+          python3 -m unittest discover -s scripts/android -p "test_release_version.py"
+          bash scripts/check-no-android-updater.sh
+          bash scripts/check-no-sensio-env.sh
+
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Restore Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src -> target
+
+      - name: Rust Format, Clippy, & Test
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all --check
+          cargo clippy --locked --all-targets --all-features -- -D warnings
+          cargo test --locked --all-targets --all-features
+
+      - name: Resolve GHCR Version
+        id: version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 hub/scripts/ci/resolve-ghcr-version.py \
+            --owner "BIG-FullFill" \
+            --package "sensio-iot-new" \
+            --start-version "0.2.18" \
+            --override-version "${{ inputs.version || '' }}" \
+            --bump "${{ inputs.bump || 'patch' }}"
+
+  build:
+    name: Build (${{ matrix.platform.arch }})
+    needs: validate
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - arch: amd64
+            runner: ubuntu-24.04
+            os_arch: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            os_arch: linux/arm64
+    steps:
+      - name: Checkout Sensio-IoT-New Source
+        uses: actions/checkout@v4
+        with:
+          repository: BIG-FullFill/Sensio-IoT-New
+          ref: ${{ needs.validate.outputs.sha }}
+          token: ${{ secrets.SENSIO_SOURCE_TOKEN }}
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: ${{ matrix.platform.os_arch }}
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=sensio-iot-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=sensio-iot-${{ matrix.platform.arch }}
+
+      - name: Export Digest
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ runner.temp }}/digest"
+          printf '%s' "${{ steps.build.outputs.digest }}" > "${{ runner.temp }}/digest/${{ matrix.platform.arch }}.digest"
+
+      - name: Upload Digest Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iot-digest-${{ matrix.platform.arch }}
+          path: ${{ runner.temp }}/digest/${{ matrix.platform.arch }}.digest
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-manifest:
+    name: Publish Multi-Arch Manifest & Tags
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      packages: write
+    steps:
+      - name: Download Architecture Digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: iot-digest-*
+          merge-multiple: true
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create Multi-Arch & Jetson Tags
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          set -euo pipefail
+          amd64_digest="$(cat amd64.digest)"
+          arm64_digest="$(cat arm64.digest)"
+          test -n "$amd64_digest"
+          test -n "$arm64_digest"
+
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:${{ needs.validate.outputs.version }}" \
+            --tag "${IMAGE_NAME}:latest" \
+            "${IMAGE_NAME}@${amd64_digest}" \
+            "${IMAGE_NAME}@${arm64_digest}"
+
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:arm64" \
+            "${IMAGE_NAME}@${arm64_digest}"

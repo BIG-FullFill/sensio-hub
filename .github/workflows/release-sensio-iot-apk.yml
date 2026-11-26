@@ -1,0 +1,275 @@
+name: Sensio IoT Android APK Release
+
+on:
+  repository_dispatch:
+    types:
+      - iot-release
+      - iot-apk-release
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Sensio-IoT-New branch, tag, or commit SHA to build"
+        required: false
+        default: "main"
+
+permissions: {}
+
+concurrency:
+  group: sensio-hub-apk-iot
+  cancel-in-progress: false
+
+env:
+  EXPECTED_ANDROID_CERT_SHA256: D9CDE43A4F8C4FE5CA9E2AD870A4B0C2B35CA05D2849AF37A11C0E09DC434F94
+  TAURI_CLI_VERSION: "2.12.0"
+  ANDROID_NDK_VERSION: "27.3.13750724"
+
+jobs:
+  android-build:
+    name: Build & Publish Sensio IoT Android APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - name: Check Sensio Source Token
+        env:
+          SENSIO_SOURCE_TOKEN: ${{ secrets.SENSIO_SOURCE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$SENSIO_SOURCE_TOKEN" ]; then
+            echo "::error::Missing repository secret SENSIO_SOURCE_TOKEN (requires Contents: Read on BIG-FullFill/Sensio-IoT-New)."
+            exit 1
+          fi
+
+      - name: Checkout sensio-hub
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: hub
+          fetch-depth: 0
+
+      - name: Checkout Sensio-IoT-New Source
+        uses: actions/checkout@v4
+        with:
+          repository: BIG-FullFill/Sensio-IoT-New
+          ref: ${{ inputs.ref || github.event.client_payload.sha || 'main' }}
+          token: ${{ secrets.SENSIO_SOURCE_TOKEN }}
+          fetch-depth: 0
+          path: src
+          persist-credentials: false
+
+      - name: Resolve Source Commit
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "sha=$(git -C src rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Android Build Version
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.sha }}
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/android/resolve-release-version.py
+
+      - name: Set up Java
+        if: steps.version.outputs.already_published != 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Rust Android Targets
+        if: steps.version.outputs.already_published != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Restore Rust Cache
+        if: steps.version.outputs.already_published != 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: iot-android-release
+          key: tauri-${{ env.TAURI_CLI_VERSION }}
+          workspaces: src/src-tauri -> target
+          cache-bin: true
+
+      - name: Install Android SDK & NDK
+        if: steps.version.outputs.already_published != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/cmdline-tools/16.0/bin:$PATH"
+          packages=()
+          test -x "$ANDROID_HOME/platform-tools/adb" || packages+=("platform-tools")
+          test -f "$ANDROID_HOME/platforms/android-35/android.jar" || packages+=("platforms;android-35")
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt" || packages+=("build-tools;35.0.0")
+          if (( ${#packages[@]} > 0 )); then
+            yes | sdkmanager --licenses >/dev/null 2>&1 || true
+            for attempt in 1 2 3; do
+              if sdkmanager "${packages[@]}"; then
+                break
+              fi
+              if (( attempt == 3 )); then
+                exit 1
+              fi
+              rm -rf "$ANDROID_HOME/.temp" "$ANDROID_HOME/.downloadIntermediates"
+              sleep $((attempt * 5))
+            done
+          fi
+
+          ndk_path="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION}"
+          if [[ ! -d "$ndk_path" || "$(basename "$ndk_path")" != "$ANDROID_NDK_VERSION" ]]; then
+            ndk_path="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          fi
+          if [ ! -d "$ndk_path" ]; then
+            yes | sdkmanager --licenses >/dev/null 2>&1 || true
+            for attempt in 1 2 3; do
+              if sdkmanager "ndk;$ANDROID_NDK_VERSION"; then
+                break
+              fi
+              if (( attempt == 3 )); then
+                exit 1
+              fi
+              rm -rf "$ANDROID_HOME/.temp" "$ANDROID_HOME/.downloadIntermediates"
+              sleep $((attempt * 5))
+            done
+          fi
+          echo "NDK_HOME=$ndk_path" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ndk_path" >> "$GITHUB_ENV"
+
+      - name: Install Tauri CLI
+        if: steps.version.outputs.already_published != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install tauri-cli --version "$TAURI_CLI_VERSION" --locked
+          cargo tauri --version
+
+      - name: Initialize & Prepare Android Project
+        if: steps.version.outputs.already_published != 'true'
+        env:
+          CI: "true"
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo tauri android init --ci
+          python3 scripts/android/prepare-generated-project.py
+
+      - name: Set up Gradle Cache
+        if: steps.version.outputs.already_published != 'true'
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Configure Android Release Signing
+        if: steps.version.outputs.already_published != 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.IOT_ANDROID_RELEASE_KEYSTORE_BASE64 || secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.IOT_ANDROID_RELEASE_KEYSTORE_PASSWORD || secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.IOT_ANDROID_RELEASE_KEY_ALIAS || secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.IOT_ANDROID_RELEASE_KEY_PASSWORD || secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_B64"
+          test -n "$KEYSTORE_PASS"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASS"
+          keystore="$RUNNER_TEMP/sensio-iot-release.p12"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$keystore"
+          chmod 600 "$keystore"
+          properties="src-tauri/gen/android/keystore.properties"
+          {
+            printf 'storeFile=%s\n' "$keystore"
+            printf 'storePassword=%s\n' "$KEYSTORE_PASS"
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$KEY_PASS"
+          } > "$properties"
+          chmod 600 "$properties"
+
+      - name: Build Signed Android APK
+        if: steps.version.outputs.already_published != 'true'
+        env:
+          CI: "true"
+          ANDROID_VERSION: ${{ steps.version.outputs.version }}
+          ANDROID_VERSION_CODE: ${{ steps.version.outputs.version_code }}
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          payload = {
+              "version": os.environ["ANDROID_VERSION"],
+              "bundle": {"android": {"versionCode": int(os.environ["ANDROID_VERSION_CODE"])}},
+          }
+          Path(os.environ["RUNNER_TEMP"], "tauri-android-release.json").write_text(
+              json.dumps(payload), encoding="utf-8"
+          )
+          PY
+          cargo tauri android build --apk --ci \
+            --config "$RUNNER_TEMP/tauri-android-release.json"
+
+      - name: Verify and Package Signed APK
+        if: steps.version.outputs.already_published != 'true'
+        id: package
+        env:
+          ANDROID_VERSION: ${{ steps.version.outputs.version }}
+          ANDROID_VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          APK_NAME: ${{ steps.version.outputs.apk_name }}
+        working-directory: src
+        shell: bash
+        run: bash scripts/android/verify-apk.sh
+
+      - name: Publish Release to sensio-hub & Sync Docs
+        if: steps.version.outputs.already_published != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.sha }}
+          ANDROID_VERSION: ${{ steps.version.outputs.version }}
+          ANDROID_VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          APK_NAME: ${{ steps.version.outputs.apk_name }}
+          EXPECTED_SHA256: ${{ steps.package.outputs.sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_apk="src/dist/android/$APK_NAME"
+          test -s "$source_apk"
+          actual_sha="$(sha256sum "$source_apk" | awk '{print $1}')"
+          test "$actual_sha" = "$EXPECTED_SHA256"
+
+          tag="iot-v$ANDROID_VERSION"
+          notes=$(printf 'Sensio IoT v%s\n\nSigned universal APK `%s` (version code %s).\nSHA-256: `%s`\nSource commit: %s\n' \
+            "$ANDROID_VERSION" "$APK_NAME" "$ANDROID_VERSION_CODE" "$EXPECTED_SHA256" "$SOURCE_COMMIT")
+
+          if gh release view "$tag" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release $tag already exists on $RELEASE_REPOSITORY; refusing to replace its APK"
+            exit 1
+          fi
+
+          gh release create "$tag" "$source_apk" \
+            --repo "$RELEASE_REPOSITORY" \
+            --target main \
+            --title "Sensio IoT v$ANDROID_VERSION" \
+            --notes "$notes"
+          gh release view "$tag" --repo "$RELEASE_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fx "$APK_NAME"
+
+          cd hub
+          VERSION="$ANDROID_VERSION" TAG="$tag" APK_NAME="$APK_NAME" SHA256="$EXPECTED_SHA256" \
+            python3 scripts/sync-iot-release.py
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/
+          if ! git diff --staged --quiet; then
+            git commit -m "docs: sync Android release $tag"
+            git push origin main
+          fi
