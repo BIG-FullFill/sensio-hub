@@ -2,7 +2,7 @@ name: Release Sync
 
 on:
   repository_dispatch:
-    types: [iot-release, notes-release]
+    types: [iot-docs-sync, notes-docs-sync]
   workflow_dispatch:
     inputs:
       type:

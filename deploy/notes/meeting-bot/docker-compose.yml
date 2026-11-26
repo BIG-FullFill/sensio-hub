@@ -1,0 +1,77 @@
+services:
+  sensio-meeting-bot-api:
+    image: ghcr.io/big-fullfill/sensio-meeting-bot:${MEETING_BOT_IMAGE_TAG:-v1.100.6}
+    pull_policy: always
+    container_name: sensio-meeting-bot-api
+    restart: unless-stopped
+    entrypoint: ["/tini", "--"]
+    command: ["gunicorn", "attendee.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "120"]
+    env_file:
+      - ${MEETING_BOT_ENV_FILE:-.env}
+    environment:
+      PORT: "8000"
+      REDIS_URL: ${MEETING_BOT_REDIS_URL:-redis://shared-redis:6379/2}
+      MAX_CONCURRENT_BOTS: ${MAX_CONCURRENT_BOTS:-2}
+    mem_limit: 512m
+    cpus: "0.75"
+    volumes:
+      - sensio_meeting_bot_media:/app/media
+    networks:
+      - shared-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  sensio-meeting-bot-worker:
+    image: ghcr.io/big-fullfill/sensio-meeting-bot:${MEETING_BOT_IMAGE_TAG:-v1.100.6}
+    pull_policy: always
+    container_name: sensio-meeting-bot-worker
+    restart: unless-stopped
+    command: ["celery", "-A", "attendee", "worker", "-l", "info", "--concurrency=2"]
+    env_file:
+      - ${MEETING_BOT_ENV_FILE:-.env}
+    environment:
+      REDIS_URL: ${MEETING_BOT_REDIS_URL:-redis://shared-redis:6379/2}
+      MAX_CONCURRENT_BOTS: ${MAX_CONCURRENT_BOTS:-2}
+      ENABLE_CHROME_SANDBOX: "false"
+    shm_size: "1g"
+    mem_limit: 2560m
+    cpus: "2.25"
+    volumes:
+      - sensio_meeting_bot_media:/app/media
+    depends_on:
+      sensio-meeting-bot-api:
+        condition: service_healthy
+    networks:
+      - shared-network
+
+  sensio-meeting-bot-scheduler:
+    image: ghcr.io/big-fullfill/sensio-meeting-bot:${MEETING_BOT_IMAGE_TAG:-v1.100.6}
+    pull_policy: always
+    container_name: sensio-meeting-bot-scheduler
+    restart: unless-stopped
+    entrypoint: ["/tini", "--"]
+    command: ["python", "manage.py", "run_scheduler"]
+    env_file:
+      - ${MEETING_BOT_ENV_FILE:-.env}
+    environment:
+      REDIS_URL: ${MEETING_BOT_REDIS_URL:-redis://shared-redis:6379/2}
+    mem_limit: 256m
+    cpus: "0.25"
+    depends_on:
+      sensio-meeting-bot-api:
+        condition: service_healthy
+    networks:
+      - shared-network
+
+volumes:
+  sensio_meeting_bot_media:
+    name: sensio-meeting-bot-media
+
+networks:
+  shared-network:
+    external: true
+    name: shared-network
