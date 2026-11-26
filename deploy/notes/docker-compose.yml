@@ -13,7 +13,7 @@ services:
       LOG_FILE: /app/logs/server.log
       SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://shared-searxng:8080}
       MEETING_BOT_BASE_URL: ${MEETING_BOT_BASE_URL:-http://sensio-meeting-bot-api:8000}
-      MEETING_BOT_WEBHOOK_BASE_URL: ${MEETING_BOT_WEBHOOK_BASE_URL:-}
+      MEETING_BOT_WEBHOOK_BASE_URL: ${MEETING_BOT_WEBHOOK_BASE_URL:-https://notes.sensio.id}
     ports:
       - "${SENSIO_NOTES_HOST_BIND:-0.0.0.0}:${SENSIO_NOTES_HOST_PORT:-3008}:8080"
     volumes:
